@@ -1,0 +1,6 @@
+name: MCXboxBroadcast
+version: ${project.version}
+main: com.rtm516.mcxboxbroadcast.bootstrap.geyser.MCXboxBroadcastExtension
+api-version: 1.13
+softdepend: [Geyser-Spigot]
+authors: [rtm516, f0reachARR]
