@@ -1,12 +1,12 @@
 package com.rtm516.mcxboxbroadcast.bootstrap.geyser;
 
 import com.rtm516.mcxboxbroadcast.core.Logger;
-import org.geysermc.geyser.api.extension.ExtensionLogger;
+
 
 public class ExtensionLoggerImpl implements Logger {
-    private ExtensionLogger logger;
+    private org.slf4j.Logger logger;
 
-    public ExtensionLoggerImpl(ExtensionLogger logger) {
+    public ExtensionLoggerImpl(org.slf4j.Logger logger) {
         this.logger = logger;
     }
 
@@ -17,7 +17,7 @@ public class ExtensionLoggerImpl implements Logger {
 
     @Override
     public void warning(String message) {
-        logger.warning(message);
+        logger.warn(message);
     }
 
     @Override

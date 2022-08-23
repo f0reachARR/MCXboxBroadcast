@@ -12,3 +12,6 @@ update-interval: 30
 
 # Should Xbox Live friends automatically be whitelisted
 whitelist-friends: false
+
+host-name: Minecraft
+world-name: World

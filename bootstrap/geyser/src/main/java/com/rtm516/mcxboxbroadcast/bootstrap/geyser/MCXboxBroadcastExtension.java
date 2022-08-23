@@ -7,54 +7,53 @@ import com.rtm516.mcxboxbroadcast.core.SessionInfo;
 import com.rtm516.mcxboxbroadcast.core.SessionManager;
 import com.rtm516.mcxboxbroadcast.core.exceptions.SessionCreationException;
 import com.rtm516.mcxboxbroadcast.core.exceptions.SessionUpdateException;
-import com.rtm516.mcxboxbroadcast.core.exceptions.XboxFriendsException;
-import org.geysermc.common.PlatformType;
-import org.geysermc.floodgate.util.Utils;
-import org.geysermc.floodgate.util.WhitelistUtils;
-import org.geysermc.geyser.GeyserImpl;
-import org.geysermc.geyser.api.event.Subscribe;
-import org.geysermc.geyser.api.event.lifecycle.GeyserPostInitializeEvent;
-import org.geysermc.geyser.api.extension.Extension;
-import org.geysermc.geyser.api.network.AuthType;
+import org.bukkit.Bukkit;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.net.Socket;
-import java.net.UnknownHostException;
-import java.nio.file.FileSystem;
-import java.nio.file.Files;
-import java.util.concurrent.TimeUnit;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 
-public class MCXboxBroadcastExtension implements Extension {
+public class MCXboxBroadcastExtension extends JavaPlugin implements Listener {
     Logger logger;
     SessionManager sessionManager;
     SessionInfo sessionInfo;
     ExtensionConfig config;
 
-    @Subscribe
-    public void onPostInitialize(GeyserPostInitializeEvent event) {
-        logger = new ExtensionLoggerImpl(this.logger());
-        sessionManager = new SessionManager(this.dataFolder().toString(), logger);
+    static String CONFIG_FILE = "config.yml";
 
-        File configFile = this.dataFolder().resolve("config.yml").toFile();
+    public MCXboxBroadcastExtension() {
+    }
+
+    @Override
+    public void onEnable() {
+        // Pre-check for Geyser-Spigot installation
+        if (!Bukkit.getPluginManager().isPluginEnabled("Geyser-Spigot")) {
+            this.getSLF4JLogger().warn("Geyser-Spigot installation is required to work plguin");
+            return;
+        }
+
+        logger = new ExtensionLoggerImpl(this.getSLF4JLogger());
+        sessionManager = new SessionManager(this.getDataFolder().toString(), logger);
+
+        File configFile = new File(this.getDataFolder(), CONFIG_FILE);
 
         // Create the config file if it doesn't exist
         if (!configFile.exists()) {
             try (FileWriter writer = new FileWriter(configFile)) {
-                try (FileSystem fileSystem = this.fileSystem()) {
-                    try (InputStream input = Files.newInputStream(fileSystem.getPath("config.yml"))) {
-                        byte[] bytes = new byte[input.available()];
+                try (InputStream input = this.getResource(CONFIG_FILE)) {
+                    byte[] bytes = new byte[input.available()];
 
-                        input.read(bytes);
-
-                        writer.write(new String(bytes).toCharArray());
-
-                        writer.flush();
-                    }
+                    input.read(bytes);
+                    writer.write(new String(bytes).toCharArray());
+                    writer.flush();
                 }
             } catch (IOException e) {
                 logger.error("Failed to create config", e);
@@ -69,43 +68,36 @@ public class MCXboxBroadcastExtension implements Extension {
             return;
         }
 
+
         // Pull onto another thread so we don't hang the main thread
-        new Thread(() -> {
+        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             logger.info("Setting up Xbox session...");
 
             // Get the ip to broadcast
             String ip = config.remoteAddress;
             if (ip.equals("auto")) {
                 // Taken from core Geyser code
-                ip = this.geyserApi().bedrockListener().address();
-                try {
-                    // This is the most reliable for getting the main local IP
-                    Socket socket = new Socket();
-                    socket.connect(new InetSocketAddress("geysermc.org", 80));
-                    ip = socket.getLocalAddress().getHostAddress();
-                } catch (IOException e1) {
-                    try {
-                        // Fallback to the normal way of getting the local IP
-                        ip = InetAddress.getLocalHost().getHostAddress();
-                    } catch (UnknownHostException ignored) {
-                    }
-                }
+                logger.error("Currently, auto IP address detection is not implemented");
+                return;
             }
 
             // Get the port to broadcast
-            int port = this.geyserApi().bedrockListener().port();
-            if (!config.remotePort.equals("auto")) {
-                port = Integer.parseInt(config.remotePort);
+            if (config.remotePort.equals("auto")) {
+                logger.error("Currently, auto port number detection is not implemented");
+                return;
             }
+            int port = Integer.parseInt(config.remotePort);
 
             // Create the session information based on the Geyser config
             sessionInfo = new SessionInfo();
-            sessionInfo.setHostName(this.geyserApi().bedrockListener().primaryMotd());
-            sessionInfo.setWorldName(this.geyserApi().bedrockListener().secondaryMotd());
-            sessionInfo.setVersion(this.geyserApi().defaultRemoteServer().minecraftVersion());
-            sessionInfo.setProtocol(this.geyserApi().defaultRemoteServer().protocolVersion());
-            sessionInfo.setPlayers(this.geyserApi().onlineConnections().size());
-            sessionInfo.setMaxPlayers(this.geyserApi().maxPlayers());
+            sessionInfo.setHostName(config.hostName);
+            sessionInfo.setWorldName(config.worldName);
+            sessionInfo.setPlayers(0);
+            sessionInfo.setMaxPlayers(Bukkit.getServer().getMaxPlayers());
+
+            if (!setBedrockDefaultCodec(sessionInfo)) {
+                return;
+            }
 
             sessionInfo.setIp(ip);
             sessionInfo.setPort(port);
@@ -120,36 +112,50 @@ public class MCXboxBroadcastExtension implements Extension {
             }
 
             // Start the update timer
-            GeyserImpl.getInstance().getScheduledThread().scheduleWithFixedDelay(this::tick, config.updateInterval, config.updateInterval, TimeUnit.SECONDS);
-        }).start();
+            Bukkit.getPluginManager().registerEvents(this, this);
+            Bukkit.getScheduler().runTaskTimerAsynchronously(this, this::updateSession, 0, 20 * config.updateInterval);
+        });
     }
 
-    private void tick() {
+    private boolean setBedrockDefaultCodec(SessionInfo info) {
+        try {
+            Class<?> protocol = Class.forName("org.geysermc.geyser.network.MinecraftProtocol");
+            Field codecField = protocol.getField("DEFAULT_BEDROCK_CODEC");
+            Object codec = codecField.get(null);
+
+            Class<?> codecClass = Class.forName("com.nukkitx.protocol.bedrock.BedrockPacketCodec");
+            Method getProtocolVersion = codecClass.getMethod("getProtocolVersion");
+            Method getMinecraftVersion = codecClass.getMethod("getMinecraftVersion");
+
+            info.setProtocol((Integer) getProtocolVersion.invoke(codec));
+            info.setVersion((String) getMinecraftVersion.invoke(codec));
+        } catch (Exception e) {
+            logger.error("Version update", e);
+            return false;
+        }
+        return true;
+    }
+
+    private void updateSession() {
         // Make sure the connection is still active
         sessionManager.checkConnection();
 
         // Update the player count for the session
         try {
-            sessionInfo.setPlayers(this.geyserApi().onlineConnections().size());
+            sessionInfo.setPlayers(this.getServer().getOnlinePlayers().size());
             sessionManager.updateSession(sessionInfo);
         } catch (SessionUpdateException e) {
             logger.error("Failed to update session information!", e);
         }
+    }
 
-        // If we are in spigot, using floodgate authentication and have the config option enabled
-        // get the users friends and whitelist them
-        if (this.geyserApi().defaultRemoteServer().authType() == AuthType.HYBRID
-            && GeyserImpl.getInstance().getPlatformType() == PlatformType.SPIGOT
-            && config.whitelistFriends) {
-            try {
-                for (String xuid : sessionManager.getXboxFriends()) {
-                    if (WhitelistUtils.addPlayer(Utils.getJavaUuid(xuid), "unknown")) {
-                        logger.info("Added xbox friend " + xuid + " to whitelist");
-                    }
-                }
-            } catch (XboxFriendsException e) {
-                logger.error("Failed to fetch xbox friends for whitelist!", e);
-            }
-        }
+    @EventHandler
+    public void onPlayerJoin(PlayerJoinEvent event) {
+        Bukkit.getScheduler().runTaskAsynchronously(this, this::updateSession);
+    }
+
+    @EventHandler
+    public void onPlayerLeave(PlayerQuitEvent event) {
+        Bukkit.getScheduler().runTaskAsynchronously(this, this::updateSession);
     }
 }

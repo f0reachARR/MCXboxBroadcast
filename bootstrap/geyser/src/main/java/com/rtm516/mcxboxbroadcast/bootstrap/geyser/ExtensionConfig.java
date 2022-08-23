@@ -14,4 +14,10 @@ public class ExtensionConfig {
 
     @JsonProperty("whitelist-friends")
     public boolean whitelistFriends;
+
+    @JsonProperty("host-name")
+    public String hostName;
+
+    @JsonProperty("world-name")
+    public String worldName;
 }
